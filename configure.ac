@@ -204,6 +204,7 @@ FI_PROVIDER_SETUP([psm])
 FI_PROVIDER_SETUP([sockets])
 FI_PROVIDER_SETUP([verbs])
 FI_PROVIDER_SETUP([usnic])
+FI_PROVIDER_SETUP([general])
 FI_PROVIDER_FINI
 
 # If the user requested to build in direct mode, but

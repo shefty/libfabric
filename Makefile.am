@@ -294,6 +294,24 @@ endif !HAVE_PSM_DL
 
 endif HAVE_PSM
 
+if HAVE_GENERAL
+_general_files = \
+	prov/general/src/general.h \
+	prov/general/src/gen_fabric.c
+
+if HAVE_GENERAL_DL
+pkglib_LTLIBRARIES += libgeneral-fi.la
+libgeneral_fi_la_SOURCES = $(_general_files) $(common_srcs)
+libgeneral_fi_la_LIBADD = $(linkback) $(general_LIBS)
+libgeneral_fi_la_LDFLAGS = -module -avoid-version -shared -export-dynamic
+libgeneral_fi_la_DEPENDENCIES = $(linkback)
+else !HAVE_GENERAL_DL
+src_libfabric_la_SOURCES += $(_general_files)
+src_libfabric_la_LIBADD += $(general_LIBS)
+endif !HAVE_GENERAL_DL
+
+endif HAVE_GENERAL
+
 src_libfabric_la_LDFLAGS += -version-info 1 -export-dynamic \
 			   $(libfabric_version_script)
 src_libfabric_la_DEPENDENCIES = $(srcdir)/libfabric.map

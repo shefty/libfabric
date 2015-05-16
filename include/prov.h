@@ -93,4 +93,15 @@ USNIC_INI ;
 #  define USNIC_INIT NULL
 #endif
 
+#if (HAVE_GENERAL) && (HAVE_GENERAL_DL)
+#  define GENERAL_INI FI_EXT_INI
+#  define GENERAL_INIT NULL
+#elif (HAVE_GENERAL)
+#  define GENERAL_INI INI_SIG(fi_gen_ini)
+#  define GENERAL_INIT fi_gen_ini()
+GENERAL_INI ;
+#else
+#  define GENERAL_INIT NULL
+#endif
+
 #endif /* _PROV_H_ */
