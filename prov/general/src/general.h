@@ -43,6 +43,7 @@
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_eq.h>
 #include <rdma/fi_errno.h>
+#include <rdma/fi_msg.h>
 #include <rdma/fi_prov.h>
 #include <rdma/fi_rma.h>
 #include <rdma/fi_tagged.h>
@@ -73,5 +74,20 @@ struct gen_domain {
 	struct fid_domain *prov_domain;
 	atomic_t refcnt;
 };
+
+struct gen_av {
+	struct fid_av fid;
+	struct gen_domain *domain;
+	atomic_t refcnt;
+
+	/* default attributes for MSG EPs */
+	// tx_size
+	// rx_size
+	// tx_buf_size
+	// rx_buf_size
+};
+
+struct gen_portal;
+struct gen_tx_cmd;
 
 #endif /* _GENERAL_H_ */
