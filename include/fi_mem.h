@@ -34,16 +34,48 @@
 #  include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#include <fi.h>
+#include <assert.h>
+#include <stdlib.h>
 #include <fi_list.h>
+
+#ifdef __APPLE__
+#include <osx/osd.h>
+#elif defined __FreeBSD__
+#include <freebsd/osd.h>
+#else
+#include <linux/osd.h>
+#endif
+
 
 #ifndef _FI_MEM_H_
 #define _FI_MEM_H_
 
+
+#ifdef INCLUDE_VALGRIND
+#   include <valgrind/memcheck.h>
+#   ifndef VALGRIND_MAKE_MEM_DEFINED
+#      warning "Valgrind requested, but VALGRIND_MAKE_MEM_DEFINED undefined"
+#   endif
+#endif
+
+#ifndef VALGRIND_MAKE_MEM_DEFINED
+#   define VALGRIND_MAKE_MEM_DEFINED(addr, len)
+#endif
+
+/* We implement memdup to avoid external library dependency */
+static inline void *mem_dup(const void *src, size_t size)
+{
+	void *dest;
+
+	if ((dest = malloc(size)))
+		memcpy(dest, src, size);
+	return dest;
+}
+
+
 /*
  * Buffer Pool
  */
-
 struct util_buf_pool {
 	size_t entry_sz;
 	size_t max_cnt;
@@ -74,4 +106,5 @@ void util_buf_pool_destroy(struct util_buf_pool *pool);
 void *util_buf_get(struct util_buf_pool *pool);
 void util_buf_release(struct util_buf_pool *pool, void *buf);
 
-#endif
+
+#endif /* _FI_MEM_H_ */
