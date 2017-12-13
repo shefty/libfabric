@@ -130,19 +130,25 @@ void ofi_mr_cache_delete(struct ofi_mr_cache *cache, struct ofi_mr_entry *entry)
 }
 
 static int
-util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
-		     uint64_t access, struct ofi_mr_entry **entry)
+util_mr_cache_create(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
+		     struct ofi_mr_entry **entry)
 {
 	int ret;
 
 	FI_DBG(cache->domain->prov, FI_LOG_MR,
-	       "creating %p:%"PRIu64"\n", iov->iov_base, iov->iov_len);
+	       "creating %p:%"PRIu64"\n",
+	       attr->mr_iov->iov_base, attr->mr_iov->iov_len);
 	*entry = calloc(1, sizeof(**entry) + cache->entry_data_size);
 	if (!*entry)
 		return -FI_ENOMEM;
 
-	(*entry)->iov = *iov;
-	(*entry)->access = access;
+	(*entry)->attr.access = attr->access;
+	(*entry)->attr.offset = attr->offset;
+	(*entry)->attr.requested_key = attr->requested_key;
+	(*entry)->attr.context = attr->context;
+	(*entry)->attr.auth_key_size = attr->auth_key_size;
+	(*entry)->attr.auth_key = attr->auth_key;
+	(*entry)->iov = *attr->mr_iov;
 	(*entry)->use_cnt = 1;
 
 	ret = cache->add_region(cache, *entry);
@@ -154,7 +160,8 @@ util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
 	if (++cache->cached_cnt > cache->size) {
 		(*entry)->retired = 1;
 	} else {
-		ret = ofi_monitor_subscribe(&cache->nq, iov->iov_base, iov->iov_len,
+		ret = ofi_monitor_subscribe(&cache->nq, (*entry)->iov.iov_base,
+					    (*entry)->iov.iov_len,
 					    &(*entry)->subscription);
 		if (ret)
 			goto err_subscribe;
@@ -167,7 +174,8 @@ util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
 
 	return 0;
 err_rbtInsert:
-	ofi_monitor_unsubscribe(iov->iov_base, iov->iov_len, &(*entry)->subscription);
+	ofi_monitor_unsubscribe((*entry)->iov.iov_base, (*entry)->iov.iov_len,
+				&(*entry)->subscription);
 err_subscribe:
 	util_mr_free_entry(cache, *entry);
 	return ret;
@@ -179,6 +187,7 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 {
 	struct iovec iov, *old_iov;
 	struct ofi_mr_entry *old_entry;
+	struct fi_mr_attr mr_attr;
 
 	iov = *attr->mr_iov;
 	do {
@@ -200,7 +209,10 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 
 	} while ((iter = rbtFind(cache->mr_tree, &iov)));
 
-	return util_mr_cache_create(cache, &iov, attr->access, entry);
+	mr_attr = *attr;
+	mr_attr.mr_iov = &iov;
+
+	return util_mr_cache_create(cache, &mr_attr, entry);
 }
 
 int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
@@ -213,7 +225,8 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 
 	assert(attr->iov_count == 1);
 	FI_DBG(cache->domain->prov, FI_LOG_MR,
-	       "search %p\n", attr->iov.iov_base);
+	       "search %p:%"PRIu64"\n",
+	       attr->mr_iov->iov_base, attr->mr_iov->iov_len);
 	cache->search_cnt++;
 
 	if (cache->cached_cnt > cache->size)
@@ -221,8 +234,7 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 
 	iter = rbtFind(cache->mr_tree, (void *) attr->mr_iov);
 	if (!iter) {
-		return util_mr_cache_create(cache, attr->mr_iov,
-					    attr->access, entry);
+		return util_mr_cache_create(cache, attr, entry);
 	}
 
 	rbtKeyValue(cache->mr_tree, iter, (void **) &iov, (void **) entry);
@@ -233,6 +245,10 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 	cache->hit_cnt++;
 	if ((*entry)->use_cnt++ == 0)
 		dlist_remove(&(*entry)->lru_entry);
+
+	FI_DBG(cache->domain->prov, FI_LOG_MR,
+	       "found %p:%"PRIu64"\n",
+	       (*entry)->iov.iov_base, (*entry)->iov.iov_len);
 
 	return 0;
 }

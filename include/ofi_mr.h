@@ -150,9 +150,18 @@ int ofi_mr_map_verify(struct ofi_mr_map *map, uintptr_t *io_addr,
  * Memory registration cache
  */
 
+struct ofi_mr_ent_attr {
+	uint64_t	access;
+	uint64_t	offset;
+	uint64_t	requested_key;
+	void		*context;
+	size_t		auth_key_size;
+	uint8_t		*auth_key;
+};
+
 struct ofi_mr_entry {
 	struct iovec		iov;
-	uint64_t		access;	/* TODO */
+	struct ofi_mr_ent_attr	attr;
 	unsigned int		retired:1;
 	int			use_cnt;
 	struct dlist_entry	lru_entry;
