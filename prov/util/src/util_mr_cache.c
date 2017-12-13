@@ -53,16 +53,56 @@ static int util_mr_find_overlap(void *a, void *b)
 static void util_mr_free_entry(struct ofi_mr_cache *cache,
 			       struct ofi_mr_entry *entry)
 {
+	RbtIterator iter;
+
 	FI_DBG(cache->domain->prov, FI_LOG_MR,
-	       "freeing %p\n", entry->iov.iov_base);
+	       "freeing %p:%"PRIu64"\n",
+	       entry->iov.iov_base, entry->iov.iov_len);
+
+	if (!entry->retired) {
+		iter = rbtFind(cache->mr_tree, &entry->iov);
+		if (OFI_LIKELY(iter != NULL)) {
+			(void)rbtErase(cache->mr_tree, iter);
+		}
+	}
+	ofi_monitor_unsubscribe(entry->iov.iov_base, entry->iov.iov_len,
+				&entry->subscription);
 	cache->delete_region(cache, entry);
 	free(entry);
+
 	cache->cached_cnt--;
+}
+
+static void
+util_mr_cache_process_notifier_events(struct ofi_mr_cache *cache)
+{
+	struct ofi_mr_entry *entry;
+	struct ofi_subscription *subscription;
+	RbtIterator iter;
+
+	while ((subscription = ofi_monitor_get_event(&cache->nq))) {
+		entry = container_of(subscription, struct ofi_mr_entry,
+				     subscription);
+		if (entry->use_cnt == 0) {
+			dlist_remove(&entry->lru_entry);
+			util_mr_free_entry(cache, entry);
+		} else {
+			if (!entry->retired) {
+				iter = rbtFind(cache->mr_tree, &entry->iov);
+				if (OFI_LIKELY(iter != NULL)) {
+					(void)rbtErase(cache->mr_tree, iter);
+				}
+				entry->retired = 1;
+			}
+		}
+	}
 }
 
 static void util_mr_cache_flush(struct ofi_mr_cache *cache)
 {
 	struct ofi_mr_entry *entry;
+
+	util_mr_cache_process_notifier_events(cache);
 
 	while ((cache->cached_cnt >= cache->size) &&
 	       !dlist_empty(&cache->lru_list)) {
@@ -78,6 +118,8 @@ void ofi_mr_cache_delete(struct ofi_mr_cache *cache, struct ofi_mr_entry *entry)
 	       "delete %p\n", entry->iov.iov_base);
 	cache->delete_cnt++;
 
+	util_mr_cache_process_notifier_events(cache);
+
 	if (--entry->use_cnt == 0) {
 		if (entry->retired) {
 			util_mr_free_entry(cache, entry);
@@ -88,19 +130,25 @@ void ofi_mr_cache_delete(struct ofi_mr_cache *cache, struct ofi_mr_entry *entry)
 }
 
 static int
-util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
-		     uint64_t access, struct ofi_mr_entry **entry)
+util_mr_cache_create(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
+		     struct ofi_mr_entry **entry)
 {
 	int ret;
 
 	FI_DBG(cache->domain->prov, FI_LOG_MR,
-	       "creating %p\n", attr->iov.iov_base);
+	       "creating %p:%"PRIu64"\n",
+	       attr->mr_iov->iov_base, attr->mr_iov->iov_len);
 	*entry = calloc(1, sizeof(**entry) + cache->entry_data_size);
 	if (!*entry)
 		return -FI_ENOMEM;
 
-	(*entry)->iov = *iov;
-	(*entry)->access = access;
+	(*entry)->attr.access = attr->access;
+	(*entry)->attr.offset = attr->offset;
+	(*entry)->attr.requested_key = attr->requested_key;
+	(*entry)->attr.context = attr->context;
+	(*entry)->attr.auth_key_size = attr->auth_key_size;
+	(*entry)->attr.auth_key = attr->auth_key;
+	(*entry)->iov = *attr->mr_iov;
 	(*entry)->use_cnt = 1;
 
 	ret = cache->add_region(cache, *entry);
@@ -112,13 +160,25 @@ util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
 	if (++cache->cached_cnt > cache->size) {
 		(*entry)->retired = 1;
 	} else {
+		ret = ofi_monitor_subscribe(&cache->nq, (*entry)->iov.iov_base,
+					    (*entry)->iov.iov_len,
+					    &(*entry)->subscription);
+		if (ret)
+			goto err_subscribe;
 		if (rbtInsert(cache->mr_tree, &(*entry)->iov, *entry)) {
 			util_mr_free_entry(cache, *entry);
-			return -FI_ENOMEM;
+			ret = -FI_ENOMEM;
+			goto err_rbtInsert;
 		}
 	}
 
 	return 0;
+err_rbtInsert:
+	ofi_monitor_unsubscribe((*entry)->iov.iov_base, (*entry)->iov.iov_len,
+				&(*entry)->subscription);
+err_subscribe:
+	util_mr_free_entry(cache, *entry);
+	return ret;
 }
 
 static int
@@ -127,6 +187,7 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 {
 	struct iovec iov, *old_iov;
 	struct ofi_mr_entry *old_entry;
+	struct fi_mr_attr mr_attr;
 
 	iov = *attr->mr_iov;
 	do {
@@ -148,7 +209,10 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 
 	} while ((iter = rbtFind(cache->mr_tree, &iov)));
 
-	return util_mr_cache_create(cache, &iov, attr->access, entry);
+	mr_attr = *attr;
+	mr_attr.mr_iov = &iov;
+
+	return util_mr_cache_create(cache, &mr_attr, entry);
 }
 
 int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
@@ -157,9 +221,12 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 	RbtIterator iter;
 	struct iovec *iov;
 
+	util_mr_cache_process_notifier_events(cache);
+
 	assert(attr->iov_count == 1);
 	FI_DBG(cache->domain->prov, FI_LOG_MR,
-	       "search %p\n", attr->iov.iov_base);
+	       "search %p:%"PRIu64"\n",
+	       attr->mr_iov->iov_base, attr->mr_iov->iov_len);
 	cache->search_cnt++;
 
 	if (cache->cached_cnt > cache->size)
@@ -167,8 +234,7 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 
 	iter = rbtFind(cache->mr_tree, (void *) attr->mr_iov);
 	if (!iter) {
-		return util_mr_cache_create(cache, attr->mr_iov,
-					    attr->access, entry);
+		return util_mr_cache_create(cache, attr, entry);
 	}
 
 	rbtKeyValue(cache->mr_tree, iter, (void **) &iov, (void **) entry);
@@ -179,6 +245,10 @@ int ofi_mr_cache_search(struct ofi_mr_cache *cache, const struct fi_mr_attr *att
 	cache->hit_cnt++;
 	if ((*entry)->use_cnt++ == 0)
 		dlist_remove(&(*entry)->lru_entry);
+
+	FI_DBG(cache->domain->prov, FI_LOG_MR,
+	       "found %p:%"PRIu64"\n",
+	       (*entry)->iov.iov_base, (*entry)->iov.iov_len);
 
 	return 0;
 }
@@ -203,11 +273,13 @@ void ofi_mr_cache_cleanup(struct ofi_mr_cache *cache)
 		util_mr_free_entry(cache, entry);
 	}
 	rbtDelete(cache->mr_tree);
+	ofi_monitor_del_queue(&cache->nq);
 	ofi_atomic_dec32(&cache->domain->ref);
 	assert(cache->cached_cnt == 0);
 }
 
-int ofi_mr_cache_init(struct util_domain *domain, struct ofi_mr_cache *cache)
+int ofi_mr_cache_init(struct util_domain *domain, struct ofi_mem_monitor *monitor,
+		      struct ofi_mr_cache *cache)
 {
 	assert(cache->add_region && cache->delete_region);
 
@@ -217,6 +289,8 @@ int ofi_mr_cache_init(struct util_domain *domain, struct ofi_mr_cache *cache)
 
 	cache->domain = domain;
 	ofi_atomic_inc32(&domain->ref);
+
+	ofi_monitor_add_queue(monitor, &cache->nq);
 
 	dlist_init(&cache->lru_list);
 	cache->cached_cnt = 0;
