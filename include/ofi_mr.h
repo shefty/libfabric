@@ -116,7 +116,7 @@ int ofi_monitor_subscribe(struct ofi_notification_queue *nq,
 			  void *addr, size_t len,
 			  struct ofi_subscription *subscription);
 void ofi_monitor_unsubscribe(void *addr, size_t len,
-			      struct ofi_subscription *subscription);
+			     struct ofi_subscription *subscription);
 struct ofi_subscription *ofi_monitor_get_event(struct ofi_notification_queue *nq);
 
 
@@ -156,29 +156,32 @@ struct ofi_mr_entry {
 	unsigned int		retired:1;
 	int			use_cnt;
 	struct dlist_entry	lru_entry;
+	struct ofi_subscription	subscription;
 	uint8_t			data[];
 };
 
 struct ofi_mr_cache {
-	struct util_domain	*domain;
-	size_t			size;
-	size_t			entry_data_size;
+	struct util_domain		*domain;
+	struct ofi_notification_queue	nq;
+	size_t				size;
+	size_t				entry_data_size;
 
-	RbtHandle		mr_tree;
-	struct dlist_entry	lru_list;
+	RbtHandle			mr_tree;
+	struct dlist_entry		lru_list;
 
-	uint64_t		cached_cnt;
-	uint64_t		search_cnt;
-	uint64_t		delete_cnt;
-	uint64_t		hit_cnt;
+	uint64_t			cached_cnt;
+	uint64_t			search_cnt;
+	uint64_t			delete_cnt;
+	uint64_t			hit_cnt;
 
-	int			(*add_region)(struct ofi_mr_cache *cache,
-					       struct ofi_mr_entry *entry);
-	void			(*delete_region)(struct ofi_mr_cache *cache,
-						 struct ofi_mr_entry *entry);
+	int				(*add_region)(struct ofi_mr_cache *cache,
+						      struct ofi_mr_entry *entry);
+	void				(*delete_region)(struct ofi_mr_cache *cache,
+							 struct ofi_mr_entry *entry);
 };
 
-int ofi_mr_cache_init(struct util_domain *domain, struct ofi_mr_cache *cache);
+int ofi_mr_cache_init(struct util_domain *domain, struct ofi_mem_monitor *monitor,
+		      struct ofi_mr_cache *cache);
 void ofi_mr_cache_cleanup(struct ofi_mr_cache *cache);
 
 /* Caller must provide locking around search/delete calls */
