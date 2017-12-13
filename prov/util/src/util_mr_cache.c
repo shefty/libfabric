@@ -77,14 +77,16 @@ util_mr_cache_process_events(struct ofi_mr_cache *cache)
 	while ((subscription = ofi_monitor_get_event(&cache->nq))) {
 		entry = container_of(subscription, struct ofi_mr_entry,
 				     subscription);
-		if (entry->use_cnt == 0) {
-			dlist_remove(&entry->lru_entry);
-			util_mr_free_entry(cache, entry);
-		} else if (!entry->retired) {
+		if (entry->cached) {
 			iter = rbtFind(cache->mr_tree, &entry->iov);
 			assert(iter);
 			rbtErase(cache->mr_tree, iter);
-			entry->retired = 1;
+			entry->cached = 0;
+		}
+
+		if (entry->use_cnt == 0) {
+			dlist_remove(&entry->lru_entry);
+			util_mr_free_entry(cache, entry);
 		}
 	}
 }
@@ -112,10 +114,10 @@ void ofi_mr_cache_delete(struct ofi_mr_cache *cache, struct ofi_mr_entry *entry)
 	util_mr_cache_process_events(cache);
 
 	if (--entry->use_cnt == 0) {
-		if (entry->retired) {
-			util_mr_free_entry(cache, entry);
-		} else {
+		if (entry->cached) {
 			dlist_insert_tail(&entry->lru_entry, &cache->lru_list);
+		} else {
+			util_mr_free_entry(cache, entry);
 		}
 	}
 }
@@ -144,7 +146,7 @@ util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
 	}
 
 	if (++cache->cached_cnt > cache->size) {
-		(*entry)->retired = 1;
+		(*entry)->cached = 0;
 	} else {
 		ret = ofi_monitor_subscribe(&cache->nq, iov->iov_base, iov->iov_len,
 					    &(*entry)->subscription);
@@ -184,7 +186,7 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 
 		rbtErase(cache->mr_tree, iter);
 		if (old_entry->use_cnt) {
-			old_entry->retired = 1;
+			old_entry->cached = 0;
 		} else {
 			dlist_remove(&old_entry->lru_entry);
 			util_mr_free_entry(cache, old_entry);

@@ -154,7 +154,7 @@ int ofi_mr_map_verify(struct ofi_mr_map *map, uintptr_t *io_addr,
 struct ofi_mr_entry {
 	struct iovec			iov;
 	uint64_t			access;	/* TODO */
-	unsigned int			retired:1;
+	unsigned int			cached:1;
 	unsigned int			subscribed:1;
 	int				use_cnt;
 	struct dlist_entry		lru_entry;
