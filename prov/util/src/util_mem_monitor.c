@@ -96,6 +96,10 @@ int ofi_monitor_subscribe(struct ofi_notification_queue *nq,
 void ofi_monitor_unsubscribe(void *addr, size_t len,
 			     struct ofi_subscription *subscription)
 {
+	FI_DBG(&core_prov, FI_LOG_MR,
+	       "unsubscribing addr=%p len=%zu subscription=%p nq=%p\n",
+	       addr, len, subscription, subscription->nq);
+
 	subscription->nq->monitor->unsubscribe(subscription->nq->monitor,
 						addr, len, subscription);
 	fastlock_acquire(&subscription->nq->lock);

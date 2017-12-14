@@ -78,6 +78,9 @@ util_mr_cache_process_events(struct ofi_mr_cache *cache)
 		entry = container_of(subscription, struct ofi_mr_entry,
 				     subscription);
 		if (entry->cached) {
+			FI_DBG(cache->domain->prov, FI_LOG_MR,
+			       "erase from tree %p (len: %" PRIu64 ")\n",
+			       entry->iov.iov_base, entry->iov.iov_len);
 			iter = rbtFind(cache->mr_tree, &entry->iov);
 			assert(iter);
 			rbtErase(cache->mr_tree, iter);
@@ -94,10 +97,18 @@ util_mr_cache_process_events(struct ofi_mr_cache *cache)
 bool ofi_mr_cache_flush(struct ofi_mr_cache *cache)
 {
 	struct ofi_mr_entry *entry;
+	RbtIterator iter;
 
 	if (!dlist_empty(&cache->lru_list)) {
 		dlist_pop_front(&cache->lru_list, struct ofi_mr_entry,
 				entry, lru_entry);
+		FI_DBG(cache->domain->prov, FI_LOG_MR,
+		       "erase from tree %p (len: %" PRIu64 ")\n",
+		       entry->iov.iov_base, entry->iov.iov_len);
+		iter = rbtFind(cache->mr_tree, &entry->iov);
+		assert(iter);
+		rbtErase(cache->mr_tree, iter);
+		entry->cached = 0;
 		util_mr_free_entry(cache, entry);
 		return true;
 	} else {
@@ -158,6 +169,7 @@ util_mr_cache_create(struct ofi_mr_cache *cache, const struct iovec *iov,
 			ret = -FI_ENOMEM;
 			goto err;
 		}
+		(*entry)->cached = 1;
 	}
 
 	return 0;
@@ -184,14 +196,20 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 			MAX(ofi_iov_end(&iov), ofi_iov_end(old_iov))) -
 			((uintptr_t) iov.iov_base);
 
+		FI_DBG(cache->domain->prov, FI_LOG_MR,
+		       "merging %p (len: %" PRIu64 ") "
+		       "with %p (len: %"PRIu64") "
+		       "to %p (lne: %"PRIu64")\n",
+		       attr->mr_iov->iov_base, attr->mr_iov->iov_len,
+		       old_iov->iov_base, old_iov->iov_len,
+		       iov.iov_base, iov.iov_len);
+
 		rbtErase(cache->mr_tree, iter);
-		if (old_entry->use_cnt) {
-			old_entry->cached = 0;
-		} else {
+		old_entry->cached = 0;
+		if (!old_entry->use_cnt) {
 			dlist_remove(&old_entry->lru_entry);
 			util_mr_free_entry(cache, old_entry);
 		}
-
 	} while ((iter = rbtFind(cache->mr_tree, &iov)));
 
 	return util_mr_cache_create(cache, &iov, attr->access, entry);
