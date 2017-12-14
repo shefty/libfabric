@@ -105,10 +105,12 @@ bool ofi_mr_cache_flush(struct ofi_mr_cache *cache)
 		FI_DBG(cache->domain->prov, FI_LOG_MR,
 		       "erase from tree %p (len: %" PRIu64 ")\n",
 		       entry->iov.iov_base, entry->iov.iov_len);
-		iter = rbtFind(cache->mr_tree, &entry->iov);
-		assert(iter);
-		rbtErase(cache->mr_tree, iter);
-		entry->cached = 0;
+		if (entry->cached) {
+			iter = rbtFind(cache->mr_tree, &entry->iov);
+			assert(iter);
+			rbtErase(cache->mr_tree, iter);
+			entry->cached = 0;
+		}
 		util_mr_free_entry(cache, entry);
 		return true;
 	} else {
@@ -190,16 +192,15 @@ util_mr_cache_merge(struct ofi_mr_cache *cache, const struct fi_mr_attr *attr,
 	do {
 		rbtKeyValue(cache->mr_tree, iter, (void **) &old_iov,
 			    (void **) &old_entry);
-
-		iov.iov_base = MIN(iov.iov_base, old_iov->iov_base);
 		iov.iov_len = ((uintptr_t)
 			MAX(ofi_iov_end(&iov), ofi_iov_end(old_iov))) -
-			((uintptr_t) iov.iov_base);
+			((uintptr_t) MIN(iov.iov_base, old_iov->iov_base));
+		iov.iov_base = MIN(iov.iov_base, old_iov->iov_base);
 
 		FI_DBG(cache->domain->prov, FI_LOG_MR,
 		       "merging %p (len: %" PRIu64 ") "
 		       "with %p (len: %"PRIu64") "
-		       "to %p (lne: %"PRIu64")\n",
+		       "to %p (len: %"PRIu64")\n",
 		       attr->mr_iov->iov_base, attr->mr_iov->iov_len,
 		       old_iov->iov_base, old_iov->iov_len,
 		       iov.iov_base, iov.iov_len);
