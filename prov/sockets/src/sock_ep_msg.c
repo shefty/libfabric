@@ -303,7 +303,8 @@ static int sock_pep_create_listener(struct sock_pep *pep)
 	}
 
 	addr_size = sizeof(pep->src_addr);
-	if (!ofi_getsockname(pep->cm.sock, &pep->src_addr.sa, &addr_size)) {
+	if (ofi_getsockname(pep->cm.sock, &pep->src_addr.sa,
+			    &addr_size) == SOCKET_ERROR) {
 		ret = -ofi_sockerr();
 		goto err;
 	}
