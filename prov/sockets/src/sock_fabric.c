@@ -735,10 +735,12 @@ static int sock_addr_matches_interface(struct slist *addr_list,
 
 static int sock_node_matches_interface(struct slist *addr_list, const char *node)
 {
-	union ofi_sock_ip addr = { 0 };
+	union ofi_sock_ip addr;
 	struct addrinfo *rai = NULL, ai = {
 		.ai_socktype = SOCK_STREAM,
 	};
+
+	memset(&addr, 0, sizeof(addr));
 
 	if (getaddrinfo(node, 0, &ai, &rai)) {
 		SOCK_LOG_DBG("getaddrinfo failed!\n");
