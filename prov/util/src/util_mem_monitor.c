@@ -39,6 +39,7 @@ struct ofi_mem_monitor *uffd_monitor = &uffd.monitor;
 
 struct ofi_mem_monitor *default_monitor;
 
+struct ofi_mem_monitor *dummy_monitor = NULL; /* A stub to disable MR caching */
 
 /*
  * Initialize all available memory monitors
@@ -52,9 +53,11 @@ void ofi_monitor_init(void)
 	dlist_init(&memhooks_monitor->list);
 
 #if HAVE_UFFD_UNMAP
-	default_monitor = uffd_monitor;
+        default_monitor = uffd_monitor;
+#elif defined(HAVE_ELF_H) && defined(HAVE_SYS_AUXV_H)
+        default_monitor = memhooks_monitor;
 #else
-	default_monitor = memhooks_monitor;
+        default_monitor = dummy_monitor;
 #endif
 
 	fi_param_define(NULL, "mr_cache_max_size", FI_PARAM_SIZE_T,
@@ -78,11 +81,12 @@ void ofi_monitor_init(void)
 	fi_param_define(NULL, "mr_cache_monitor", FI_PARAM_STRING,
 			"Define a default memory registration monitor."
 			" The monitor checks for virtual to physical memory"
-			" address changes.  Options are: userfaultfd and"
-			" memhooks.  Userfaultfd is a Linux kernel feature."
+			" address changes.  Options are: userfaultfd, memhooks"
+			" and disabled.  Userfaultfd is a Linux kernel feature."
 			" Memhooks operates by intercepting memory allocation"
 			" and free calls.  Userfaultfd is the default if"
-			"available on the system.");
+			" available on the system. 'disabled' option disables"
+			" memory caching.");
 
 	fi_param_get_size_t(NULL, "mr_cache_max_size", &cache_params.max_size);
 	fi_param_get_size_t(NULL, "mr_cache_max_count", &cache_params.max_cnt);
@@ -99,6 +103,8 @@ void ofi_monitor_init(void)
 			default_monitor = uffd_monitor;
 		else if (!strcmp(cache_params.monitor, "memhooks"))
 			default_monitor = memhooks_monitor;
+		else if (!strcmp(cache_params.monitor, "disabled"))
+			default_monitor = dummy_monitor;
 	}
 }
 
@@ -116,9 +122,11 @@ int ofi_monitor_add_cache(struct ofi_mem_monitor *monitor,
 {
 	int ret = 0;
 
+	if (monitor == dummy_monitor)
+		return -FI_ENOSYS;
+
 	fastlock_acquire(&monitor->lock);
 	if (dlist_empty(&monitor->list)) {
-
 		if (monitor == uffd_monitor)
 			ret = ofi_uffd_init();
 		else if (monitor == memhooks_monitor)
@@ -140,7 +148,7 @@ void ofi_monitor_del_cache(struct ofi_mr_cache *cache)
 {
 	struct ofi_mem_monitor *monitor = cache->monitor;
 
-	if (!monitor)
+	if (monitor == dummy_monitor)
 		return;
 
 	fastlock_acquire(&monitor->lock);
