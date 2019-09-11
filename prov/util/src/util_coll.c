@@ -563,16 +563,16 @@ void util_coll_barrier_comp(struct util_coll_mc *coll_mc,
 			} \
 		} while (0)
 
-#define SWITCH_REDUCE(type,FUNC,...)		\
+#define SWITCH_REDUCE(type,FUNC,src,dst,cnt,OP)		\
 switch (type) {							 \
-		case FI_INT8:	FUNC(__VA_ARGS__,int8_t); break; \
-		case FI_UINT8:	FUNC(__VA_ARGS__,uint8_t); break; \
-		case FI_INT16:	FUNC(__VA_ARGS__,int16_t); break; \
-		case FI_UINT16: FUNC(__VA_ARGS__,uint16_t); break; \
-		case FI_INT32:	FUNC(__VA_ARGS__,int32_t); break; \
-		case FI_UINT32: FUNC(__VA_ARGS__,uint32_t); break; \
-		case FI_INT64:	FUNC(__VA_ARGS__,int64_t); break; \
-		case FI_UINT64: FUNC(__VA_ARGS__,uint64_t); break; \
+		case FI_INT8:	FUNC(src,dst,cnt,OP,int8_t); break; \
+		case FI_UINT8:	FUNC(src,dst,cnt,OP,uint8_t); break; \
+		case FI_INT16:	FUNC(src,dst,cnt,OP,int16_t); break; \
+		case FI_UINT16: FUNC(src,dst,cnt,OP,uint16_t); break; \
+		case FI_INT32:	FUNC(src,dst,cnt,OP,int32_t); break; \
+		case FI_UINT32: FUNC(src,dst,cnt,OP,uint32_t); break; \
+		case FI_INT64:	FUNC(src,dst,cnt,OP,int64_t); break; \
+		case FI_UINT64: FUNC(src,dst,cnt,OP,uint64_t); break; \
 		default: return -FI_EOPNOTSUPP; \
 		}
 
