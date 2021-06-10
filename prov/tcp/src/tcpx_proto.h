@@ -46,6 +46,149 @@
 
 
 /*
+ * Version 4 definitions
+ */
+
+enum {
+	TCPX_CM_OP_CONNECT,
+	TCPX_CM_OP_ACCEPT,
+	TCPX_CM_OP_REJECT,
+};
+
+ /* version must be first for compatibility - align with ofi_ctrl_hdr */
+struct tcpx_cm_msg_v4 {
+	uint8_t version; /* version is set during CM exchange only */
+	uint8_t op;
+	uint8_t flags;
+	uint8_t size;
+	uint16_t endian;
+	uint16_t error;
+	uint8_t data[UINT8_MAX];
+};
+
+/* op field:
+ * bits 7:6 - reserved
+ * bits 5:4 - hdr type (short, standard, extended)
+ * bits 3:0 - opcode
+ */
+
+/* values limited to 2 bits */
+enum {
+	TCPX_HDR_SHORT,
+	TCPX_HDR_STD,
+	TCPX_HDR_EXT,
+	/* 1 reserved value available */
+	TCPX_HDR_MAX,
+};
+
+/* implementation comment:
+ * RTS/CTS - ready to send, clear to send, used for rendezvous
+ */
+/* values limited to 4 bits */
+enum {
+	TCPX_ACK,
+	TCPX_OP_MSG,
+	TCPX_OP_MSG_RTS,
+	TCPX_OP_MSG_CTS,
+	TCPX_OP_MSG_WRITE,
+	TCPX_OP_TAG,
+	TCPX_OP_TAG_RTS,
+	TCPX_OP_TAG_CTS,
+	TCPX_OP_TAG_WRITE,
+	TCPX_OP_WRITE,
+	TCPX_OP_READ_REQ,
+	TCPX_OP_READ_RESP,
+	TCPX_OP_MAX,
+};
+
+static inline uint8_t tcpx_get_hdr_type(uint8_t op)
+{
+	return op >> 4;
+}
+
+static inline void tcpx_set_hdr_op(uint8_t *op, uint8_t type, uint8_t opcode)
+{
+	assert((type < TCPX_HDR_MAX) && (opcode < TCPX_OP_MAX));
+	*op = (type << 4) | opcode;
+}
+
+/* flags - 8 bits available */
+enum {
+	TCPX_ACK_REQ = BIT(0),
+	TCPX_CQ_DATA = BIT(1),
+};
+
+/* header layout:
+ * short, standard, or extended header
+ * u64 cq data: if CQ_DATA flag set
+ * u32 or u64 tag: if op = OP_TAG
+ * rma: if op = {WRITE, WRITE_REQ, READ_REQ}
+ */
+
+/* Standard RMA iovec.  Pair with the standard header for RMA transfers
+ * < 4GB and that target a single scatter-gather region.
+ */
+struct tcpx_std_rma {
+	uint64_t addr;
+	uint32_t len;
+	uint32_t key;
+};
+
+/* Extended RMA iovec.  Pair with extended header for RMA transfers >= GB
+ * or that target multiple scatter-gather regions.
+ */
+struct tcpx_ext_rma {
+	uint64_t		addr;
+	uint64_t		len;
+	uint64_t		key;
+};
+
+
+/* Short header format supports OP_MSG transfers < 64k, plus internal
+ * protocol messages.  It can support OP_TAG transfers for 32-bit tags
+ * (upper 32-bits of tag are 0).  Messages with 64-bit protocol fields
+ * (e.g. CQ data or RMA target addr) must use the standard or extended
+ * header for proper 64-bit field alignment.
+ */
+struct tcpx_short_hdr {
+	uint8_t op;
+	uint8_t flags;
+	uint16_t size;
+};
+
+/* Standard header is expected to support most transfers that cannot use
+ * the short header.  Handles transfers < 4GB, RMA operations that target
+ * a single memory region, messages carrying CQ data, and tagged messages
+ * requiring a 64-bit tag.
+ */
+struct tcpx_std_hdr {
+	uint8_t op;
+	uint8_t flags;
+	uint8_t hdr_size;
+	union {
+		uint8_t rsvd;
+		uint8_t id; /* debug */
+	};
+	uint32_t size;
+};
+
+/* Extended header is primarily for feature compatibility with the v3 tcp
+ * protocol.  Supports transfers >= 4GB and RMA operations that target
+ * multiple memory regions.
+ */
+struct tcpx_ext_hdr {
+	uint8_t op;
+	uint8_t flags;
+	uint8_t hdr_size;
+	union {
+		uint8_t rsvd;
+		uint8_t id; /* debug */
+	};
+	uint32_t resv; /* alignment */
+	uint64_t size;
+};
+
+/*
  * Version 3 (compatibility) definitions
  */
 
