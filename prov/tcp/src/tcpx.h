@@ -57,8 +57,9 @@
 #include <ofi_list.h>
 #include <ofi_signal.h>
 #include <ofi_util.h>
-#include <ofi_proto.h>
 #include <ofi_net.h>
+
+#include "tcpx_proto.h"
 
 #ifndef _TCP_H_
 #define _TCP_H_
@@ -82,78 +83,6 @@ extern size_t tcpx_zerocopy_size;
 
 struct tcpx_xfer_entry;
 struct tcpx_ep;
-
-
-/*
- * Wire protocol structures and definitions
- */
-
-#define TCPX_CTRL_HDR_VERSION	3
-
-enum {
-	TCPX_MAX_CM_DATA_SIZE = (1 << 8)
-};
-
-struct tcpx_cm_msg {
-	struct ofi_ctrl_hdr hdr;
-	char data[TCPX_MAX_CM_DATA_SIZE];
-};
-
-#define TCPX_HDR_VERSION	3
-
-enum {
-	TCPX_IOV_LIMIT = 4
-};
-
-/* base_hdr::op_data */
-enum {
-	/* backward compatible value */
-	TCPX_OP_ACK = 2, /* indicates ack message - should be a flag */
-};
-
-/* Flags */
-#define TCPX_REMOTE_CQ_DATA	(1 << 0)
-/* not used TCPX_TRANSMIT_COMPLETE	(1 << 1) */
-#define TCPX_DELIVERY_COMPLETE	(1 << 2)
-#define TCPX_COMMIT_COMPLETE	(1 << 3)
-#define TCPX_TAGGED		(1 << 7)
-
-struct tcpx_base_hdr {
-	uint8_t			version;
-	uint8_t			op;
-	uint16_t		flags;
-	uint8_t			op_data;
-	uint8_t			rma_iov_cnt;
-	uint8_t			hdr_size;
-	union {
-		uint8_t		rsvd;
-		uint8_t		id; /* debug */
-	};
-	uint64_t		size;
-};
-
-struct tcpx_tag_hdr {
-	struct tcpx_base_hdr	base_hdr;
-	uint64_t		tag;
-};
-
-struct tcpx_cq_data_hdr {
-	struct tcpx_base_hdr 	base_hdr;
-	uint64_t		cq_data;
-};
-
-struct tcpx_tag_data_hdr {
-	struct tcpx_cq_data_hdr	cq_data_hdr;
-	uint64_t		tag;
-};
-
-/* Maximum header is scatter RMA with CQ data */
-#define TCPX_MAX_HDR (sizeof(struct tcpx_cq_data_hdr) + \
-		     sizeof(struct ofi_rma_iov) * TCPX_IOV_LIMIT)
-
-/*
- * End wire protocol definitions
- */
 
 
 enum tcpx_cm_state {
