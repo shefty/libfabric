@@ -39,6 +39,63 @@
 #include <ofi_util.h>
 
 
+/* Messages must be in host order */
+static void tcpx_up_cm_msg(struct tcpx_cm_msg *msg_v3,
+			   struct tcpx_cm_msg_v4 *msg_v4)
+{
+	msg_v4->version = 4;
+	switch (msg_v3->hdr.type) {
+	case ofi_ctrl_connreq:
+		msg_v4->op = TCPX_CM_OP_CONNECT;
+		break;
+	case ofi_ctrl_connresp:
+		msg_v4->op = TCPX_CM_OP_ACCEPT;
+		break;
+	default:
+		msg_v4->op = TCPX_CM_OP_REJECT;
+		break;
+	}
+	msg_v4->flags = 0;
+	msg_v4->endian = (msg_v3->hdr.conn_data == 1) ? 1 : BIT(8);
+	msg_v4->error = 0;
+
+	if (msg_v3->hdr.seg_size) {
+		msg_v4->size = msg_v3->hdr.seg_size < sizeof(msg_v4->data) ?
+			       msg_v3->hdr.seg_size : sizeof(msg_v4->data);
+		memcpy(msg_v4->data, msg_v3->data, msg_v4->size);
+	} else {
+		msg_v4->size = 0;
+		memset(msg_v4->data, 0, sizeof(msg_v4->data));
+	}
+}
+
+/* Messages must be in host order */
+static void tcpx_down_cm_msg(struct tcpx_cm_msg *msg_v3,
+			     struct tcpx_cm_msg_v4 *msg_v4)
+{
+	msg_v3->hdr.version = 3;
+	switch (msg_v4->op) {
+	case TCPX_CM_OP_CONNECT:
+		msg_v3->hdr.type = ofi_ctrl_connreq;
+		break;
+	case TCPX_CM_OP_ACCEPT:
+		msg_v3->hdr.type = ofi_ctrl_connresp;
+		break;
+	default:
+		msg_v3->hdr.type = ofi_ctrl_nack;
+		break;
+	}
+	msg_v3->hdr.conn_data = (msg_v4->endian == 1) ? 1 : BIT_ULL(56);
+
+	if (msg_v4->size) {
+		msg_v3->hdr.seg_size = msg_v4->size;
+		memcpy(msg_v3->data, msg_v4->data, msg_v4->size);
+	} else {
+		msg_v3->hdr.seg_size = 0;
+		memset(msg_v3->data, 0, sizeof(msg_v3->data));
+	}
+}
+
 /* The underlying socket has the POLLIN event set.  The entire
  * CM message should be readable, as it fits within a single MTU
  * and is the first data transferred over the socket.
