@@ -57,6 +57,8 @@ struct ofi_epollfds_event {
 };
 #endif
 
+extern int ofi_poll_fairness;
+
 enum ofi_pollfds_ctl {
 	POLLFDS_CTL_ADD,
 	POLLFDS_CTL_DEL,
@@ -73,9 +75,15 @@ struct ofi_pollfds_work_item {
 
 struct ofi_pollfds_ctx {
 	void		*context;
+	int		hit_cnt;
+	int		hot_index;
 };
 
 struct ofi_pollfds {
+	int		fairness_cntr;
+	int		hot_size;
+	int		hot_nfds;
+	struct pollfd	*hot_fds;
 	int		size;
 	int		nfds;
 	struct pollfd	*fds;
@@ -96,6 +104,11 @@ int ofi_pollfds_wait(struct ofi_pollfds *pfds,
 		     struct ofi_epollfds_event *events,
 		     int maxevents, int timeout);
 void ofi_pollfds_close(struct ofi_pollfds *pfds);
+
+void ofi_pollfds_coolfd(struct ofi_pollfds *pfds,
+			struct ofi_pollfds_ctx *ctx);
+void ofi_pollfds_heatfd(struct ofi_pollfds *pfds,
+			struct ofi_pollfds_ctx *ctx, struct pollfd *pfd);
 
 /* OS specific */
 void ofi_pollfds_do_add(struct ofi_pollfds *pfds,

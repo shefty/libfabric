@@ -84,6 +84,13 @@ struct ofi_common_locks common_locks = {
 
 size_t ofi_universe_size = 1024;
 
+#if defined _WIN32
+int ofi_poll_fairness = 0; /* see comments ofi_pollfds_hotties */
+#else
+int ofi_poll_fairness = 10; // TODO: set to 0
+#endif
+
+
 int fi_poll_fd(int fd, int timeout)
 {
 	struct pollfd fds;
@@ -1330,8 +1337,10 @@ int ofi_pollfds_grow(struct ofi_pollfds *pfds, int max_size)
 		free(pfds->fds);
 	}
 
-	while (pfds->size < size)
+	while (pfds->size < size) {
+		ctx[pfds->size].hot_index = INVALID_SOCKET;
 		fds[pfds->size++].fd = INVALID_SOCKET;
+	}
 
 	pfds->fds = fds;
 	pfds->ctx = ctx;
@@ -1365,6 +1374,59 @@ err2:
 err1:
 	free(*pfds);
 	return ret;
+}
+
+void ofi_pollfds_heatfd(struct ofi_pollfds *pfds,
+			struct ofi_pollfds_ctx *ctx, struct pollfd *pfd)
+{
+	struct pollfd *fds;
+	size_t size;
+
+	assert(ctx->hot_index == INVALID_SOCKET);
+
+	if (pfds->hot_nfds >= pfds->hot_size) {
+		size = pfds->hot_size + 8;
+		fds = calloc(size, sizeof(*fds));
+		if (!fds)
+			return;
+
+		if (pfds->hot_size) {
+			memcpy(fds, pfds->hot_fds, pfds->hot_size * sizeof(*fds));
+			free(pfds->hot_fds);
+		}
+
+		pfds->hot_fds = fds;
+		pfds->hot_size = size;
+	}
+
+	pfds->hot_fds[pfds->hot_nfds] = *pfd;
+	ctx->hot_index = pfds->hot_nfds++;
+}
+
+/* We use the fd as a direct index into the ctx array.  This only
+ * works on unix systems.
+ *
+ * Maintain a compact pollfds array.
+ */
+void ofi_pollfds_coolfd(struct ofi_pollfds *pfds,
+			struct ofi_pollfds_ctx *ctx)
+{
+	struct ofi_pollfds_ctx *swap_ctx;
+	struct pollfd *swap_pfd;
+
+	assert(ctx->hot_index != INVALID_SOCKET);
+
+	if (ctx->hot_index < pfds->hot_nfds - 1) {
+		swap_pfd = &pfds->hot_fds[pfds->hot_nfds - 1];
+		swap_ctx = &pfds->ctx[swap_pfd->fd];
+
+		pfds->hot_fds[ctx->hot_index] = *swap_pfd;
+		swap_ctx->hot_index = ctx->hot_index;
+	}
+
+	OFI_DBG_SET(pfds->hot_fds[pfds->hot_nfds].fd, INVALID_SOCKET);
+	pfds->hot_nfds--;
+	ctx->hot_index = INVALID_SOCKET;
 }
 
 static int ofi_pollfds_ctl(struct ofi_pollfds *pfds, enum ofi_pollfds_ctl op,
@@ -1465,20 +1527,49 @@ static void ofi_pollfds_process_work(struct ofi_pollfds *pfds)
 		}
 		free(item);
 	}
+	pfds->fairness_cntr = 0;
 }
 
-int ofi_pollfds_wait(struct ofi_pollfds *pfds,
-		     struct ofi_epollfds_event *events,
-		     int maxevents, int timeout)
+/* We use the fd as a direct index into the ctx array.  This only
+ * works on unix systems.  Also see ofi_pollfds_coolfd.
+ */
+static int ofi_pollfds_hotties(struct ofi_pollfds *pfds,
+			       struct ofi_epollfds_event *events,
+			       int maxevents)
+{
+	struct ofi_pollfds_ctx *ctx;
+	int found, i, ret;
+
+	ret = poll(pfds->hot_fds, pfds->hot_nfds, 0);
+	if (ret == SOCKET_ERROR)
+		return -ofi_sockerr();
+	else if (ret == 0)
+		return 0;
+
+	found = 0;
+	ret = MIN(maxevents, ret);
+
+	for (i = 0; i < pfds->hot_nfds && found < ret; i++) {
+		if (pfds->hot_fds[i].revents) {
+			events[found].events = pfds->hot_fds[i].revents;
+
+			ctx = &pfds->ctx[pfds->hot_fds[i].fd];
+			events[found++].data.ptr = ctx->context;
+			ctx->hit_cnt++;
+		}
+	}
+
+	return found;
+}
+
+static int ofi_pollfds_waitall(struct ofi_pollfds *pfds,
+			       struct ofi_epollfds_event *events,
+			       int maxevents, int timeout)
 {
 	uint64_t start;
 	int i, ret;
 	int found = 0;
-
-	fastlock_acquire(&pfds->lock);
-	if (!slist_empty(&pfds->work_item_list))
-		ofi_pollfds_process_work(pfds);
-	fastlock_release(&pfds->lock);
+	bool warm;
 
 	start = (timeout > 0) ? ofi_gettime_ms() : 0;
 	do {
@@ -1501,10 +1592,23 @@ int ofi_pollfds_wait(struct ofi_pollfds *pfds,
 		ret = MIN(maxevents, ret);
 
 		/* Index 0 is the internal signaling fd, skip it */
-		for (i = 1; i < pfds->nfds && found < ret; i++) {
+		for (i = 1; i < pfds->nfds; i++) {
 			if (pfds->fds[i].revents) {
+				warm = true;
 				events[found].events = pfds->fds[i].revents;
 				events[found++].data.ptr = pfds->ctx[i].context;
+			} else {
+				warm = pfds->ctx[i].hit_cnt ||
+				       (pfds->fds[i].events & POLLOUT);
+			}
+
+			if (warm) {
+				pfds->ctx[i].hit_cnt = 0;
+				if (pfds->ctx[i].hot_index == INVALID_SOCKET)
+					ofi_pollfds_heatfd(pfds, &pfds->ctx[i],
+							   &pfds->fds[i]);
+			} else if (pfds->ctx[i].hot_index != INVALID_SOCKET) {
+				ofi_pollfds_coolfd(pfds, &pfds->ctx[i]);
 			}
 		}
 
@@ -1514,6 +1618,28 @@ int ofi_pollfds_wait(struct ofi_pollfds *pfds,
 	} while (timeout > 0 && !found);
 
 	return found;
+}
+
+int ofi_pollfds_wait(struct ofi_pollfds *pfds,
+		     struct ofi_epollfds_event *events,
+		     int maxevents, int timeout)
+{
+	int ret;
+
+	fastlock_acquire(&pfds->lock);
+	if (!slist_empty(&pfds->work_item_list))
+		ofi_pollfds_process_work(pfds);
+	fastlock_release(&pfds->lock);
+
+	if ((pfds->fairness_cntr > 0) && (timeout == 0) && pfds->hot_nfds) {
+		ret = ofi_pollfds_hotties(pfds, events, maxevents);
+		pfds->fairness_cntr--;
+	} else {
+		ret = ofi_pollfds_waitall(pfds, events, maxevents, timeout);
+		pfds->fairness_cntr = ofi_poll_fairness;
+	}
+
+	return ret;
 }
 
 void ofi_pollfds_close(struct ofi_pollfds *pfds)

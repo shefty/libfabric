@@ -614,6 +614,9 @@ void ofi_pollfds_do_add(struct ofi_pollfds *pfds,
 	pfds->fds[pfds->nfds].events = item->events;
 	pfds->fds[pfds->nfds].revents = 0;
 	pfds->ctx[pfds->nfds].context = item->context;
+
+	ofi_pollfds_heatfd(pfds, &pfds->ctx[pfds->nfds],
+			   &pfds->fds[pfds->nfds]);
 	pfds->nfds++;
 }
 
@@ -642,6 +645,8 @@ void ofi_pollfds_do_del(struct ofi_pollfds *pfds,
 	for (i = 0; i < pfds->nfds; i++) {
 		if (pfds->fds[i].fd == item->fd) {
 			pfds->fds[i].fd = INVALID_SOCKET;
+			if (pfds->ctx[i].hot_index != INVALID_SOCKET)
+				ofi_pollfds_coolfd(pfds, &pfds->ctx[i]);
 
 			pfds->nfds--;
 			pfds->fds[i].fd = pfds->fds[pfds->nfds].fd;
