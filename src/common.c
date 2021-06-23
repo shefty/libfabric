@@ -1471,15 +1471,16 @@ int ofi_pollfds_wait(struct ofi_pollfds *pfds,
 		     struct ofi_epollfds_event *events,
 		     int maxevents, int timeout)
 {
+	uint64_t start;
 	int i, ret;
 	int found = 0;
-	uint64_t start = (timeout >= 0) ? ofi_gettime_ms() : 0;
 
 	fastlock_acquire(&pfds->lock);
 	if (!slist_empty(&pfds->work_item_list))
 		ofi_pollfds_process_work(pfds);
 	fastlock_release(&pfds->lock);
 
+	start = (timeout > 0) ? ofi_gettime_ms() : 0;
 	do {
 		ret = poll(pfds->fds, pfds->nfds, timeout);
 		if (ret == SOCKET_ERROR)
