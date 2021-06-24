@@ -87,7 +87,7 @@ size_t ofi_universe_size = 1024;
 #if defined _WIN32
 int ofi_poll_fairness = 0; /* see comments ofi_pollfds_hotties */
 #else
-int ofi_poll_fairness = 10; // TODO: set to 0
+int ofi_poll_fairness = 0;
 #endif
 
 
